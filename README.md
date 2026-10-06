@@ -1,31 +1,89 @@
 # Electricity Demand Forecasting
 
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.37%2B-red)
+![XGBoost](https://img.shields.io/badge/XGBoost-Regression-green)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.5-orange)
+
+Hourly electricity demand forecasting with XGBoost, served through an interactive Streamlit application.
+
 **Live demo:** https://electricity-demand-forecasting-gnaxcfqfpan6fvvrcwnafc.streamlit.app/
 
-XGBoost regression model + Streamlit app for hourly electricity demand forecasting (2020–2024).
+## Table of contents
+
+- [Overview](#overview)
+- [Key features](#key-features)
+- [Project structure](#project-structure)
+- [Dataset](#dataset)
+- [Methodology](#methodology)
+- [Model and results](#model-and-results)
+- [Application walkthrough](#application-walkthrough)
+- [Getting started](#getting-started)
+- [Deployment](#deployment)
+- [Limitations and future work](#limitations-and-future-work)
 
 ## Overview
 
-Predicts hourly electricity demand from calendar features, weather, and recent demand history. The Streamlit app supports single predictions, batch CSV scoring, model performance evaluation, and data exploration.
+This project forecasts hourly electricity demand from calendar attributes, weather conditions, and recent demand history. It includes:
 
-## Project files
+1. An exploratory and training notebook (`ML+Project+-+Electricity+Demand+Forecasting.ipynb`)
+2. A serialized XGBoost regressor (`electicity_xgb_prediction_model.pkl`)
+3. A production Streamlit app (`app.py`) for single predictions, batch scoring, performance analysis, and data exploration
 
-- `app.py` — Streamlit application
-- `electicity_xgb_prediction_model.pkl` — trained `XGBRegressor` (joblib)
-- `Electricity+Demand+Dataset.csv` — raw hourly data
-- `ML+Project+-+Electricity+Demand+Forecasting.ipynb` — training / EDA notebook
+## Key features
+
+- Single-hour demand prediction from date, time, temperature, and humidity
+- Automatic derivation of calendar features (hour, day of week, month, year, day of year, ISO week, quarter, weekend flag)
+- History-aware lag defaults: historical values when the timestamp exists in the data, otherwise editable dataset medians
+- Batch scoring: upload a CSV with the 14 model features, download predictions
+- Performance dashboard: MAE, RMSE, R², actual-vs-predicted plot, error table, and XGBoost feature importance
+- Data explorer: raw preview, descriptive statistics, and daily, hourly, and monthly demand charts
+- Cached model and dataset loading for fast Streamlit reruns
+
+## Project structure
+
+```text
+.
+├── app.py                                          # Streamlit application
+├── requirements.txt                                # Deployment dependencies
+├── electicity_xgb_prediction_model.pkl             # Trained XGBRegressor
+├── Electricity+Demand+Dataset.csv                  # Raw hourly data
+└── ML+Project+-+Electricity+Demand+Forecasting.ipynb  # Training and EDA
+```
 
 ## Dataset
 
-Raw columns in `Electricity+Demand+Dataset.csv`:
+Source file: `Electricity+Demand+Dataset.csv`
 
-`Timestamp, hour, dayofweek, month, year, dayofyear, Temperature, Humidity, Demand`
+| Column | Description |
+| --- | --- |
+| Timestamp | Calendar date (date resolution; hour is stored separately) |
+| hour | Hour of day, 0–23 |
+| dayofweek | Monday = 0 through Sunday = 6 |
+| month | 1–12 |
+| year | 2020–2024 |
+| dayofyear | 1–366 |
+| Temperature | Ambient temperature |
+| Humidity | Relative humidity (%) |
+| Demand | Target variable: hourly electricity demand |
 
-- ~43,848 hourly rows, 2020-01-01 to 2024-12-31
-- `Timestamp` is date-only; `hour` is a separate column
-- Contains scattered missing values (handled in preprocessing)
+Coverage is approximately 43,848 hourly records from 2020-01-01 to 2024-12-31, with scattered missing values handled during preprocessing.
 
-## Model input features (14, in order)
+## Methodology
+
+The app reproduces the notebook pipeline exactly:
+
+1. Parse `Timestamp` into a sorted `DatetimeIndex`; drop fully-empty rows
+2. Forward-fill calendar columns; backward-fill temperature and humidity; time-interpolate `Demand`
+3. Engineer calendar features: `quarter`, ISO `weekofyear`, and `is_weekend`
+4. Engineer history features:
+   - `Demand_lag_24hr`: demand at the same hour on the previous day
+   - `demand_lag_168hr`: demand at the same hour one week earlier
+   - `demand_rolling_mean_24hr` and `demand_rolling_std_24hr`: 24-hour rolling statistics
+5. Drop incomplete warm-up rows, yielding approximately 43,676 usable rows
+6. Chronological split: train through 2023-12-31, test from 2024-01-01
+
+Final model input is 14 features in the order stored in `model.feature_names_in_`:
 
 ```text
 hour, dayofweek, month, year, dayofyear, weekofyear, quarter,
@@ -34,65 +92,62 @@ Demand_lag_24hr, demand_lag_168hr,
 demand_rolling_mean_24hr, demand_rolling_std_24hr
 ```
 
-Target: `Demand`
+## Model and results
 
-## Preprocessing (same as notebook)
+- Algorithm: `XGBRegressor(n_estimators=1000, learning_rate=0.01, early_stopping_rounds=50, random_state=42)`
+- Evaluation on the post-2024-01-01 holdout, reproduced locally:
 
-1. Parse `Timestamp`, set as sorted `DatetimeIndex`, drop fully-empty rows
-2. `ffill` time columns, `bfill` temperature/humidity, time-interpolate `Demand`
-3. Add `quarter`, `weekofyear` (ISO), `is_weekend` (Sat/Sun = 1)
-4. Add lags: `shift(24)`, `shift(168)`; rolling 24h mean/std
-5. `dropna` → ~43,676 rows
-6. Train: up to `2023-12-31`; Test: from `2024-01-01`
+| Metric | Value |
+| --- | --- |
+| MAE | 123.38 |
+| RMSE | 174.56 |
+| R² | 0.9847 |
 
-## Model
+## Application walkthrough
 
-- `XGBRegressor(n_estimators=1000, learning_rate=0.01, early_stopping_rounds=50, random_state=42)`
-- Test performance (reproduced locally):
-  - MAE: 123.38
-  - RMSE: 174.56
-  - R²: 0.9847
+- **Predict:** select date and time, set temperature and humidity, review or edit the four lag and rolling inputs, run the prediction, and optionally score a batch CSV.
+- **Model performance:** inspect holdout metrics, the actual-versus-predicted chart, a sampled comparison table, and feature importance.
+- **Data explorer:** review raw rows, summary statistics, and aggregated demand patterns.
 
-## App tabs
+## Getting started
 
-- Predict: date/time + temperature/humidity sliders, lag/rolling inputs (pre-filled from history when the timestamp exists, otherwise dataset medians), single prediction, batch CSV scoring with downloadable template
-- Model performance: test metrics, actual vs predicted plot, sample table, feature importance
-- Data explorer: raw head, summary stats, daily/hourly/monthly demand charts
+Prerequisites: Python 3.11+ is recommended.
 
-## Installation
+Install dependencies:
 
-Requires Python with:
+```powershell
+pip install -r requirements.txt
+```
+
+Run locally from the project directory:
+
+```powershell
+streamlit run app.py
+```
+
+Streamlit prints two addresses for the same app:
 
 ```text
-streamlit
-pandas
-numpy
-matplotlib
-scikit-learn
-xgboost
-joblib
+Local URL:   http://localhost:8501
+Network URL: http://192.168.x.x:8501
 ```
 
-Example:
+Use the Local URL on the machine running the app; use the Network URL from another device on the same local network.
 
-```powershell
-pip install streamlit pandas numpy matplotlib scikit-learn xgboost joblib
-```
+For batch scoring, use the Predict tab to download `feature_template.csv`, populate all 14 feature columns, upload the file, and export `demand_predictions.csv`.
 
-Note: in this workspace the working interpreter is the Anaconda Python at `C:\Users\lenovo\anaconda3\python.exe`. The `C:\Program Files\Python310\python.exe` install is broken.
+## Deployment
 
-## Usage
+The repository is deployment-ready for Streamlit Community Cloud:
 
-From the project folder:
+- Entrypoint: `app.py`
+- Dependencies: `requirements.txt` containing `streamlit`, `pandas`, `numpy`, `matplotlib`, `scikit-learn`, `xgboost`, and `joblib`
+- After pushing changes to the `main` branch, reboot the Cloud app if it does not redeploy automatically
 
-```powershell
-& 'C:\Users\lenovo\anaconda3\python.exe' -m streamlit run app.py
-```
+A missing `requirements.txt` previously caused `ModuleNotFoundError: No module named 'joblib'` on Cloud because only Streamlit was installed. That file is now included.
 
+## Limitations and future work
 
-Batch prediction: in Predict tab, download `feature_template.csv`, fill the 14 feature columns, upload it, then download `demand_predictions.csv`.
-
-## Notes
-
-- Lag/rolling features need recent demand history. For future timestamps the app uses medians as defaults — override them if you know recent demand.
-- Loading the `.pkl` may emit an XGBoost version warning about serialized models. It still loads and predicts correctly; re-saving with `Booster.save_model` removes the warning.
+- Future-hour forecasts require assumed lag and rolling values; the app currently uses medians unless historical context or user-provided history is available.
+- The serialized model may emit an XGBoost version warning when loaded by a newer XGBoost release; predictions remain valid.
+- Possible extensions: recursive multi-hour forecasting, weather-forecast integration, holiday features, experiment tracking, and automated retraining.
