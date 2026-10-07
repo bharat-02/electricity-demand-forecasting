@@ -125,12 +125,7 @@ Run locally from the project directory:
 streamlit run app.py
 ```
 
-Streamlit prints two addresses for the same app:
 
-```text
-Local URL:   http://localhost:8501
-Network URL: http://192.168.x.x:8501
-```
 
 Use the Local URL on the machine running the app; use the Network URL from another device on the same local network.
 
